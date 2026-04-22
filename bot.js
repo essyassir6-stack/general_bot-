@@ -13,9 +13,16 @@ const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID;
 
 // Validation
-if (!BOT_TOKEN || !LOG_CHANNEL_ID || !MOD_ROLE_ID) {
-    console.error('❌ Missing environment variables!');
-    console.error('Required: BOT_TOKEN, LOG_CHANNEL_ID, MOD_ROLE_ID');
+if (!BOT_TOKEN) {
+    console.error('❌ BOT_TOKEN is missing!');
+    process.exit(1);
+}
+if (!LOG_CHANNEL_ID) {
+    console.error('❌ LOG_CHANNEL_ID is missing!');
+    process.exit(1);
+}
+if (!MOD_ROLE_ID) {
+    console.error('❌ MOD_ROLE_ID is missing!');
     process.exit(1);
 }
 
@@ -29,49 +36,53 @@ const client = new Client({
     ]
 });
 
-// ==================== HELPER FUNCTIONS ====================
-
-async function sendLog(message, action, targetUser, reason = 'No reason') {
+// Helper function to send logs
+async function sendLog(message, action, target, reason) {
     try {
         const logChannel = client.channels.cache.get(LOG_CHANNEL_ID);
         if (!logChannel) {
-            console.error('Log channel not found!');
+            console.log('⚠️ Log channel not found');
             return;
         }
 
-        const embed = new EmbedBuilder()
+        const logEmbed = new EmbedBuilder()
             .setColor(0xFF6B6B)
             .setTitle(`🔨 ${action}`)
             .setThumbnail(message.author.displayAvatarURL())
             .addFields(
                 { name: '👮 Executor', value: `${message.author.tag} (${message.author.id})`, inline: true },
-                { name: '🎯 Target', value: targetUser ? `${targetUser.user ? targetUser.user.tag : targetUser.tag} (${targetUser.id})` : 'N/A', inline: true },
-                { name: '⚡ Action', value: action, inline: true },
+                { name: '🎯 Target', value: `${target.user?.tag || target.tag} (${target.id})`, inline: true },
                 { name: '📝 Reason', value: reason, inline: false },
                 { name: '📍 Channel', value: `<#${message.channel.id}>`, inline: true }
             )
             .setTimestamp();
 
-        await logChannel.send({ embeds: [embed] });
+        await logChannel.send({ embeds: [logEmbed] });
     } catch (error) {
         console.error('Log error:', error);
     }
 }
 
-async function sendConfirm(message, action, targetUser, reason = '') {
+// Helper function to send success message
+async function sendSuccess(message, action, target, duration = null) {
     const embed = new EmbedBuilder()
         .setColor(0x4CAF50)
-        .setTitle(`✅ ${action} Successful`)
-        .setDescription(`Successfully ${action.toLowerCase()} ${targetUser ? `<@${targetUser.id}>` : ''}`)
+        .setTitle(`✅ ${action}`)
+        .setDescription(`Successfully applied ${action.toLowerCase()} to <@${target.id}>`)
         .addFields(
-            { name: 'Moderator', value: message.author.tag, inline: true }
+            { name: 'Moderator', value: message.author.tag, inline: true },
+            { name: 'Target', value: target.user?.tag || target.tag, inline: true }
         );
-    if (targetUser) embed.addFields({ name: 'Target', value: targetUser.user ? targetUser.user.tag : targetUser.tag, inline: true });
-    if (reason) embed.addFields({ name: 'Reason', value: reason, inline: false });
+    
+    if (duration) {
+        embed.addFields({ name: 'Duration', value: duration, inline: true });
+    }
+    
     embed.setTimestamp();
     await message.reply({ embeds: [embed] });
 }
 
+// Helper function to send error message
 async function sendError(message, errorText) {
     const embed = new EmbedBuilder()
         .setColor(0xFF0000)
@@ -81,22 +92,20 @@ async function sendError(message, errorText) {
     await message.reply({ embeds: [embed] });
 }
 
+// Check if user has mod permissions
 function hasModPermission(member) {
-    // Admin bypass
     if (member.permissions.has(PermissionsBitField.Flags.Administrator)) return true;
-    // Check for mod role
     return member.roles.cache.has(MOD_ROLE_ID);
 }
 
-function hasPermission(member, permission) {
-    return member.permissions.has(permission);
-}
-
-function parseDuration(durationStr) {
-    const match = durationStr.match(/^(\d+)([mhd])$/);
+// Parse time string (10m, 1h, 1d)
+function parseTime(timeString) {
+    const match = timeString.match(/^(\d+)([mhd])$/);
     if (!match) return null;
+    
     const value = parseInt(match[1]);
     const unit = match[2];
+    
     switch(unit) {
         case 'm': return value * 60 * 1000;
         case 'h': return value * 60 * 60 * 1000;
@@ -105,6 +114,19 @@ function parseDuration(durationStr) {
     }
 }
 
+// Format milliseconds to readable string
+function formatDuration(ms) {
+    const minutes = Math.floor(ms / 60000);
+    const hours = Math.floor(ms / 3600000);
+    const days = Math.floor(ms / 86400000);
+    
+    if (days > 0) return `${days} day(s)`;
+    if (hours > 0) return `${hours} hour(s)`;
+    if (minutes > 0) return `${minutes} minute(s)`;
+    return 'unknown';
+}
+
+// Get target user
 async function getTarget(message, userId) {
     try {
         return await message.guild.members.fetch(userId);
@@ -113,8 +135,7 @@ async function getTarget(message, userId) {
     }
 }
 
-// ==================== HELP PANEL ====================
-
+// Help command
 async function showHelp(message) {
     const embed = new EmbedBuilder()
         .setColor(0x5865F2)
@@ -122,16 +143,16 @@ async function showHelp(message) {
         .setDescription('Here are all available commands:')
         .setThumbnail(message.guild.iconURL())
         .addFields(
-            { name: '🛠️ MODERATION (7 commands)', value: '```\n' +
+            { name: '🛠️ MODERATION', value: '```\n' +
                 '!ban <userID> [reason] - Permanently ban a user\n' +
-                '!kick <userID> [reason] - Kick a user from server\n' +
-                '!timout <userID> <time> [reason] - Timeout user (10m, 1h, 1d)\n' +
-                '!untimout <userID> [reason] - Remove timeout from user\n' +
+                '!kick <userID> [reason] - Kick a user from the server\n' +
+                '!mute <userID> <time> [reason] - Timeout user (10m, 1h, 1d)\n' +
                 '!timeout <userID> <time> [reason] - Same as mute\n' +
+                '!unmute <userID> [reason] - Remove timeout from user\n' +
                 '!clear <amount> - Delete messages (1-100)\n' +
-                '!warn <userID> [reason] - Send warning to user\n' +
+                '!warn <userID> [reason] - Send a warning to user\n' +
                 '```', inline: false },
-            { name: '🔧 UTILITY (5 commands)', value: '```\n' +
+            { name: '🔧 UTILITY', value: '```\n' +
                 '!avatar [userID] - Show user avatar\n' +
                 '!serverinfo - Show server information\n' +
                 '!userinfo [userID] - Show user information\n' +
@@ -139,183 +160,235 @@ async function showHelp(message) {
                 '!help - Show this help panel\n' +
                 '```', inline: false }
         )
-        .setFooter({ text: `⚠️ Moderation commands require <@&${MOD_ROLE_ID}> role or Admin permissions` })
+        .setFooter({ text: `⚠️ Moderation commands require <@&${MOD_ROLE_ID}> role` })
         .setTimestamp();
 
     await message.reply({ embeds: [embed] });
 }
 
-// ==================== BOT READY ====================
-
 client.once('ready', () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
-    console.log(`📝 Log Channel: ${LOG_CHANNEL_ID}`);
-    console.log(`👮 Mod Role ID: ${MOD_ROLE_ID}`);
-    console.log(`🚀 Bot is ready with 12 commands!`);
-    console.log(`💬 Commands work in ANY channel`);
+    console.log(`📝 Log channel: ${LOG_CHANNEL_ID}`);
+    console.log(`👮 Mod role: ${MOD_ROLE_ID}`);
+    console.log(`🚀 Bot is ready!`);
+    console.log(`💡 Commands work in ANY channel`);
 });
 
-// ==================== COMMAND HANDLER ====================
-
 client.on('messageCreate', async (message) => {
+    // Ignore bots
     if (message.author.bot) return;
+    
+    // Check for command prefix
     if (!message.content.startsWith('!')) return;
     
+    // Parse command
     const args = message.content.slice(1).trim().split(/ +/);
     const command = args.shift().toLowerCase();
     
-    // HELP COMMAND (no permission needed)
+    // Help command - no permission needed
     if (command === 'help') {
         return showHelp(message);
     }
     
-    // Check mod permission for moderation commands
-    const modCommands = ['ban', 'kick', 'mute', 'unmute', 'timeout', 'clear', 'warn'];
-    if (modCommands.includes(command) && !hasModPermission(message.member)) {
-        return sendError(message, `You need the <@&${MOD_ROLE_ID}> role to use this command!`);
+    // Check mod permission for all other commands
+    const moderationCommands = ['ban', 'kick', 'mute', 'timeout', 'unmute', 'clear', 'warn'];
+    if (moderationCommands.includes(command) && !hasModPermission(message.member)) {
+        return sendError(message, `You need the <@&${MOD_ROLE_ID}> role to use moderation commands!`);
     }
     
-    // ==================== BAN COMMAND ====================
+    // ========== BAN COMMAND ==========
     if (command === 'ban') {
-        const targetId = args[0];
-        if (!targetId) return sendError(message, 'Usage: `!ban <userID> [reason]`');
+        const userId = args[0];
+        if (!userId) return sendError(message, 'Usage: `!ban <userID> [reason]`');
         
-        if (!hasPermission(message.member, PermissionsBitField.Flags.BanMembers)) {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) {
             return sendError(message, 'You need the "Ban Members" permission!');
         }
         
-        const target = await getTarget(message, targetId);
+        const target = await getTarget(message, userId);
         if (!target) return sendError(message, 'User not found!');
         if (!target.bannable) return sendError(message, 'I cannot ban this user!');
         
-        const reason = args.slice(1).join(' ') || 'No reason';
-        await target.ban({ reason: `${reason} (Banned by ${message.author.tag})` });
-        await sendConfirm(message, 'Ban', target, reason);
-        await sendLog(message, 'Ban', target, reason);
+        const reason = args.slice(1).join(' ') || 'No reason provided';
+        
+        try {
+            await target.ban({ reason: `${reason} (Banned by ${message.author.tag})` });
+            await sendSuccess(message, 'Ban', target);
+            await sendLog(message, 'Ban', target, reason);
+        } catch (error) {
+            console.error(error);
+            return sendError(message, 'Failed to ban user. Check my permissions!');
+        }
     }
     
-    // ==================== KICK COMMAND ====================
+    // ========== KICK COMMAND ==========
     else if (command === 'kick') {
-        const targetId = args[0];
-        if (!targetId) return sendError(message, 'Usage: `!kick <userID> [reason]`');
+        const userId = args[0];
+        if (!userId) return sendError(message, 'Usage: `!kick <userID> [reason]`');
         
-        if (!hasPermission(message.member, PermissionsBitField.Flags.KickMembers)) {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
             return sendError(message, 'You need the "Kick Members" permission!');
         }
         
-        const target = await getTarget(message, targetId);
+        const target = await getTarget(message, userId);
         if (!target) return sendError(message, 'User not found!');
         if (!target.kickable) return sendError(message, 'I cannot kick this user!');
         
-        const reason = args.slice(1).join(' ') || 'No reason';
-        await target.kick(`${reason} (Kicked by ${message.author.tag})`);
-        await sendConfirm(message, 'Kick', target, reason);
-        await sendLog(message, 'Kick', target, reason);
+        const reason = args.slice(1).join(' ') || 'No reason provided';
+        
+        try {
+            await target.kick(`${reason} (Kicked by ${message.author.tag})`);
+            await sendSuccess(message, 'Kick', target);
+            await sendLog(message, 'Kick', target, reason);
+        } catch (error) {
+            console.error(error);
+            return sendError(message, 'Failed to kick user. Check my permissions!');
+        }
     }
     
-    // ==================== MUTE/TIMEOUT COMMAND ====================
+    // ========== MUTE/TIMEOUT COMMAND ==========
     else if (command === 'mute' || command === 'timeout') {
-        const targetId = args[0];
-        const durationStr = args[1];
-        if (!targetId || !durationStr) {
-            return sendError(message, 'Usage: `!mute <userID> <time> [reason]`\nTime formats: 10m, 1h, 1d\nExample: `!mute 123456789 10m Spamming`');
+        const userId = args[0];
+        const timeAmount = args[1];
+        
+        if (!userId || !timeAmount) {
+            return sendError(message, 'Usage: `!mute <userID> <time> [reason]`\nExamples: `!mute 123456789 10m Spamming`, `!mute 123456789 1h`, `!mute 123456789 1d`');
         }
         
-        if (!hasPermission(message.member, PermissionsBitField.Flags.ModerateMembers)) {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
             return sendError(message, 'You need the "Moderate Members" permission!');
         }
         
-        const target = await getTarget(message, targetId);
+        const target = await getTarget(message, userId);
         if (!target) return sendError(message, 'User not found!');
-        if (!target.moderatable) return sendError(message, 'I cannot mute this user!');
         
-        const durationMs = parseDuration(durationStr);
-        if (!durationMs) return sendError(message, 'Invalid time format! Use: 10m (minutes), 1h (hours), 1d (days)');
-        if (durationMs > 28 * 24 * 60 * 60 * 1000) return sendError(message, 'Mute cannot exceed 28 days!');
+        if (!target.moderatable) {
+            return sendError(message, 'I cannot timeout this user! They may have higher permissions than me.');
+        }
         
-        const reason = args.slice(2).join(' ') || 'No reason';
-        await target.timeout(durationMs, `${reason} (Timed out by ${message.author.tag})`);
-        await sendConfirm(message, `Mute (${durationStr})`, target, reason);
-        await sendLog(message, `Mute (${durationStr})`, target, reason);
+        const durationMs = parseTime(timeAmount);
+        if (!durationMs) {
+            return sendError(message, 'Invalid time format! Use: 10m (minutes), 1h (hours), 1d (days)');
+        }
+        
+        if (durationMs > 28 * 24 * 60 * 60 * 1000) {
+            return sendError(message, 'Timeout cannot be longer than 28 days!');
+        }
+        
+        const reason = args.slice(2).join(' ') || 'No reason provided';
+        const durationReadable = formatDuration(durationMs);
+        
+        try {
+            await target.timeout(durationMs, `${reason} (Timed out by ${message.author.tag})`);
+            await sendSuccess(message, `Timeout (${durationReadable})`, target, durationReadable);
+            await sendLog(message, `Timeout (${durationReadable})`, target, reason);
+        } catch (error) {
+            console.error(error);
+            return sendError(message, 'Failed to timeout user. Check my permissions!');
+        }
     }
     
-    // ==================== UNMUTE/UNTIMEOUT COMMAND ====================
-    else if (command === 'unmute' || command === 'untimeout') {
-        const targetId = args[0];
-        if (!targetId) return sendError(message, 'Usage: `!unmute <userID> [reason]`');
+    // ========== UNMUTE COMMAND ==========
+    else if (command === 'unmute') {
+        const userId = args[0];
+        if (!userId) return sendError(message, 'Usage: `!unmute <userID> [reason]`');
         
-        if (!hasPermission(message.member, PermissionsBitField.Flags.ModerateMembers)) {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
             return sendError(message, 'You need the "Moderate Members" permission!');
         }
         
-        const target = await getTarget(message, targetId);
+        const target = await getTarget(message, userId);
         if (!target) return sendError(message, 'User not found!');
-        if (!target.moderatable) return sendError(message, 'I cannot unmute this user!');
+        
+        if (!target.moderatable) {
+            return sendError(message, 'I cannot remove timeout from this user!');
+        }
         
         if (!target.communicationDisabledUntil) {
-            return sendError(message, 'User is not muted!');
+            return sendError(message, 'This user is not currently timed out!');
         }
         
-        const reason = args.slice(1).join(' ') || 'No reason';
-        await target.timeout(null);
-        await sendConfirm(message, 'Unmute', target, reason);
-        await sendLog(message, 'Unmute', target, reason);
+        const reason = args.slice(1).join(' ') || 'No reason provided';
+        
+        try {
+            await target.timeout(null);
+            await sendSuccess(message, 'Unmute', target);
+            await sendLog(message, 'Unmute', target, reason);
+        } catch (error) {
+            console.error(error);
+            return sendError(message, 'Failed to unmute user. Check my permissions!');
+        }
     }
     
-    // ==================== CLEAR COMMAND ====================
+    // ========== CLEAR COMMAND ==========
     else if (command === 'clear') {
         const amount = parseInt(args[0]);
         if (!amount || amount < 1 || amount > 100) {
             return sendError(message, 'Usage: `!clear <1-100>`');
         }
         
-        if (!hasPermission(message.member, PermissionsBitField.Flags.ManageMessages)) {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
             return sendError(message, 'You need the "Manage Messages" permission!');
         }
         
-        const deleted = await message.channel.bulkDelete(amount, true);
-        const confirmEmbed = new EmbedBuilder()
-            .setColor(0x4CAF50)
-            .setTitle('✅ Messages Cleared')
-            .setDescription(`Deleted ${deleted.size} messages`)
-            .setTimestamp();
-        
-        const reply = await message.reply({ embeds: [confirmEmbed] });
-        setTimeout(() => reply.delete(), 3000);
-        await sendLog(message, `Clear (${deleted.size} messages)`, { id: 'N/A', tag: 'Channel' });
+        try {
+            const deleted = await message.channel.bulkDelete(amount, true);
+            const confirmEmbed = new EmbedBuilder()
+                .setColor(0x4CAF50)
+                .setTitle('✅ Messages Cleared')
+                .setDescription(`Deleted ${deleted.size} messages`)
+                .setTimestamp();
+            
+            const reply = await message.reply({ embeds: [confirmEmbed] });
+            setTimeout(() => reply.delete(), 3000);
+            await sendLog(message, `Clear (${deleted.size} messages)`, { id: 'N/A', tag: 'Channel' }, `Deleted ${deleted.size} messages`);
+        } catch (error) {
+            console.error(error);
+            return sendError(message, 'Failed to clear messages. Messages may be older than 14 days!');
+        }
     }
     
-    // ==================== WARN COMMAND ====================
+    // ========== WARN COMMAND ==========
     else if (command === 'warn') {
-        const targetId = args[0];
-        if (!targetId) return sendError(message, 'Usage: `!warn <userID> [reason]`');
+        const userId = args[0];
+        if (!userId) return sendError(message, 'Usage: `!warn <userID> [reason]`');
         
-        const target = await getTarget(message, targetId);
+        const target = await getTarget(message, userId);
         if (!target) return sendError(message, 'User not found!');
         
-        const reason = args.slice(1).join(' ') || 'No reason';
+        const reason = args.slice(1).join(' ') || 'No reason provided';
+        
         const warnEmbed = new EmbedBuilder()
             .setColor(0xFFA500)
             .setTitle('⚠️ Warning')
-            .setDescription(`You have been warned in ${message.guild.name}`)
+            .setDescription(`You have been warned in **${message.guild.name}**`)
             .addFields(
                 { name: 'Moderator', value: message.author.tag, inline: true },
                 { name: 'Reason', value: reason, inline: true }
             )
             .setTimestamp();
         
-        await target.send({ embeds: [warnEmbed] }).catch(() => {});
-        await sendConfirm(message, 'Warning', target, reason);
-        await sendLog(message, 'Warning', target, reason);
+        try {
+            await target.send({ embeds: [warnEmbed] }).catch(() => {
+                console.log('Could not DM user');
+            });
+            await sendSuccess(message, 'Warning', target);
+            await sendLog(message, 'Warning', target, reason);
+        } catch (error) {
+            console.error(error);
+            return sendError(message, 'Failed to warn user.');
+        }
     }
     
-    // ==================== AVATAR COMMAND ====================
+    // ========== AVATAR COMMAND ==========
     else if (command === 'avatar') {
-        const targetId = args[0];
+        const userId = args[0];
         let user = message.author;
-        if (targetId) {
+        
+        if (userId) {
             try {
-                user = await client.users.fetch(targetId);
+                const fetchedUser = await client.users.fetch(userId);
+                if (fetchedUser) user = fetchedUser;
             } catch (error) {}
         }
         
@@ -324,10 +397,11 @@ client.on('messageCreate', async (message) => {
             .setTitle(`${user.tag}'s Avatar`)
             .setImage(user.displayAvatarURL({ size: 1024, dynamic: true }))
             .setTimestamp();
+        
         await message.reply({ embeds: [embed] });
     }
     
-    // ==================== SERVERINFO COMMAND ====================
+    // ========== SERVERINFO COMMAND ==========
     else if (command === 'serverinfo') {
         const guild = message.guild;
         const embed = new EmbedBuilder()
@@ -342,15 +416,17 @@ client.on('messageCreate', async (message) => {
                 { name: '🎭 Roles', value: `${guild.roles.cache.size}`, inline: true }
             )
             .setTimestamp();
+        
         await message.reply({ embeds: [embed] });
     }
     
-    // ==================== USERINFO COMMAND ====================
+    // ========== USERINFO COMMAND ==========
     else if (command === 'userinfo') {
-        const targetId = args[0];
+        const userId = args[0];
         let member = message.member;
-        if (targetId) {
-            const target = await getTarget(message, targetId);
+        
+        if (userId) {
+            const target = await getTarget(message, userId);
             if (target) member = target;
         }
         
@@ -361,14 +437,20 @@ client.on('messageCreate', async (message) => {
             .addFields(
                 { name: '🆔 ID', value: member.id, inline: true },
                 { name: '📅 Joined Server', value: `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>`, inline: true },
-                { name: '📅 Joined Discord', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: true },
-                { name: '🔇 Timed out until', value: member.communicationDisabledUntil ? `<t:${Math.floor(member.communicationDisabledUntil / 1000)}:R>` : 'Not timed out', inline: false }
-            )
-            .setTimestamp();
+                { name: '📅 Joined Discord', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: true }
+            );
+        
+        if (member.communicationDisabledUntil) {
+            embed.addFields({ name: '🔇 Timed out until', value: `<t:${Math.floor(member.communicationDisabledUntil / 1000)}:R>`, inline: false });
+        } else {
+            embed.addFields({ name: '🔇 Timeout', value: 'Not timed out', inline: false });
+        }
+        
+        embed.setTimestamp();
         await message.reply({ embeds: [embed] });
     }
     
-    // ==================== PING COMMAND ====================
+    // ========== PING COMMAND ==========
     else if (command === 'ping') {
         const embed = new EmbedBuilder()
             .setColor(0x5865F2)
@@ -378,16 +460,15 @@ client.on('messageCreate', async (message) => {
                 { name: 'API Latency', value: `${Math.round(client.ws.ping)}ms`, inline: true }
             )
             .setTimestamp();
+        
         await message.reply({ embeds: [embed] });
     }
 });
 
-// ==================== ERROR HANDLING ====================
-
+// Error handling
 process.on('unhandledRejection', (error) => {
     console.error('Unhandled promise rejection:', error);
 });
 
-// ==================== BOT LOGIN ====================
-
+// Login
 client.login(BOT_TOKEN);
