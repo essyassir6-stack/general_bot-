@@ -1,7 +1,7 @@
 {
   "name": "discord-moderation-bot",
-  "version": "5.0.0",
-  "description": "Simple but powerful Discord moderation bot",
+  "version": "6.0.0",
+  "description": "Discord moderation bot with timeout system",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
