@@ -146,7 +146,6 @@ async function showHelp(message) {
             { name: '🛠️ MODERATION', value: '```\n' +
                 '!ban <userID> [reason] - Permanently ban a user\n' +
                 '!kick <userID> [reason] - Kick a user from the server\n' +
-                '!mute <userID> <time> [reason] - Timeout user (10m, 1h, 1d)\n' +
                 '!timeout <userID> <time> [reason] - Same as mute\n' +
                 '!unmute <userID> [reason] - Remove timeout from user\n' +
                 '!clear <amount> - Delete messages (1-100)\n' +
