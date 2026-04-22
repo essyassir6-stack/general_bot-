@@ -1,43 +1,37 @@
 # Discord Moderation Bot
 
-A simple but powerful Discord bot with 21 commands. Commands work in ANY channel!
+A simple but powerful Discord bot with timeout-based mute system.
 
-## Commands (21 total)
+## Commands (12 total)
 
-**Moderation (8)**: ban, kick, mute, unmute, warn, clear, timeout, softban
-**Role (4)**: giverole, removerole, roles, createrole  
-**Utility (5)**: avatar, serverinfo, userinfo, ping, botinfo
-**Fun (4)**: hello, pingpong, 8ball, hug
+**Moderation (7)**: ban, kick, mute, unmute, timeout, clear, warn
+**Utility (5)**: avatar, serverinfo, userinfo, ping, help
 
 ## Setup
 
 1. Install Node.js 18+
 2. Run `npm install`
-3. Add environment variables (see below)
+3. Add environment variables
 4. Run `npm start`
 
 ## Environment Variables (Required)
 
 - `BOT_TOKEN` - Your Discord bot token
-- `LOG_CHANNEL_ID` - Channel ID where logs will be sent
+- `LOG_CHANNEL_ID` - Channel ID for logs
 - `MOD_ROLE_ID` - Role ID that can use moderation commands
 
 ## Railway Deployment
 
 1. Push code to GitHub
 2. On Railway: New Project → Deploy from GitHub
-3. Go to Variables tab and add:
-   - `BOT_TOKEN=your_token_here`
-   - `LOG_CHANNEL_ID=your_log_channel_id`
-   - `MOD_ROLE_ID=your_mod_role_id`
-4. Railway auto-deploys!
+3. Add environment variables in Variables tab
+4. Deploy automatically!
 
 ## Bot Permissions Needed
 
 - Ban Members
 - Kick Members
 - Moderate Members
-- Manage Roles
 - Manage Messages
 - Send Messages
 - Embed Links
@@ -46,10 +40,10 @@ A simple but powerful Discord bot with 21 commands. Commands work in ANY channel
 
 ## Features
 
-✅ 21 commands in ONE simple file
-✅ Commands work in ANY channel
+✅ Timeout-based mute system (Discord native)
+✅ Permission checks for each command
 ✅ Full logging system
-✅ Role-based permissions
-✅ Clean help panel with categories
+✅ Clean help panel
 ✅ No hardcoded values
+✅ Commands work in any channel
 ✅ Ready for Railway
