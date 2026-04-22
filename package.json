@@ -1,18 +1,12 @@
 {
-  "name": "discord-moderation-bot",
-  "version": "3.0.0",
-  "description": "Powerful Discord moderation bot with many commands",
+  "name": "simple-discord-bot",
+  "version": "1.0.0",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1"
-  },
-  "devDependencies": {
-    "dotenv": "^16.3.1"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5"
   }
 }
