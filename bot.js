@@ -11,11 +11,12 @@ if (process.env.NODE_ENV !== 'production') {
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID;
+const MUTE_ROLE_ID = process.env.MUTE_ROLE_ID;
 
 // Validation
-if (!BOT_TOKEN || !LOG_CHANNEL_ID || !MOD_ROLE_ID) {
+if (!BOT_TOKEN || !LOG_CHANNEL_ID || !MOD_ROLE_ID || !MUTE_ROLE_ID) {
     console.error('❌ Missing environment variables! Check Railway variables.');
-    console.error('Required: BOT_TOKEN, LOG_CHANNEL_ID, MOD_ROLE_ID');
+    console.error('Required: BOT_TOKEN, LOG_CHANNEL_ID, MOD_ROLE_ID, MUTE_ROLE_ID');
     process.exit(1);
 }
 
@@ -114,14 +115,15 @@ async function showHelp(message) {
         .setDescription('Here are all available commands:')
         .setThumbnail(message.guild.iconURL())
         .addFields(
-            { name: '🛠️ MODERATION (8 commands)', value: '```\n' +
+            { name: '🛠️ MODERATION (10 commands)', value: '```\n' +
                 '!ban <userID> [reason] - Permanently ban a user\n' +
                 '!kick <userID> [reason] - Kick a user from server\n' +
-                '!mute <userID> <time> [reason] - Mute user (10m, 1h, 1d)\n' +
-                '!unmute <userID> - Remove timeout from user\n' +
+                '!mute <userID> [reason] - Give mute role (role-based mute)\n' +
+                '!unmute <userID> [reason] - Remove mute role\n' +
+                '!timeout <userID> <time> [reason] - Discord timeout (10m, 1h, 1d)\n' +
+                '!untimeout <userID> [reason] - Remove Discord timeout\n' +
                 '!warn <userID> [reason] - Send warning to user\n' +
                 '!clear <amount> - Delete messages (1-100)\n' +
-                '!timeout <userID> <time> [reason] - Timeout user\n' +
                 '!softban <userID> [reason] - Ban & unban to clear messages\n' +
                 '```', inline: false },
             { name: '🎭 ROLE COMMANDS (4 commands)', value: '```\n' +
@@ -154,7 +156,8 @@ client.once('ready', () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
     console.log(`📝 Log Channel: ${LOG_CHANNEL_ID}`);
     console.log(`👮 Mod Role ID: ${MOD_ROLE_ID}`);
-    console.log(`🚀 Bot is ready with 21 commands!`);
+    console.log(`🔇 Mute Role ID: ${MUTE_ROLE_ID}`);
+    console.log(`🚀 Bot is ready with 23 commands!`);
     console.log(`💬 Commands work in ANY channel`);
 });
 
@@ -171,7 +174,7 @@ client.on('messageCreate', async (message) => {
     }
     
     // Check mod permission for moderation & role commands
-    const modCommands = ['ban', 'kick', 'mute', 'unmute', 'warn', 'clear', 'timeout', 'softban', 'giverole', 'removerole', 'createrole'];
+    const modCommands = ['ban', 'kick', 'mute', 'unmute', 'timeout', 'untimeout', 'warn', 'clear', 'softban', 'giverole', 'removerole', 'createrole'];
     if (modCommands.includes(command) && !hasModPermission(message.member)) {
         return sendError(message, `You need the <@&${MOD_ROLE_ID}> role to use this command!`);
     }
@@ -208,38 +211,87 @@ client.on('messageCreate', async (message) => {
         await sendLog(message, 'Kick', target, reason);
     }
     
-    // MUTE/TIMEOUT COMMAND
-    else if (command === 'mute' || command === 'timeout') {
+    // MUTE COMMAND (Role-based mute)
+    else if (command === 'mute') {
         const targetId = args[0];
-        const durationStr = args[1];
-        if (!targetId || !durationStr) return sendError(message, 'Usage: `!mute <userID> <time> [reason]`\nTime formats: 10m, 1h, 1d');
+        if (!targetId) return sendError(message, 'Usage: `!mute <userID> [reason]`');
         
         const target = await getTarget(message, targetId);
         if (!target) return sendError(message, 'User not found!');
-        if (!target.moderatable) return sendError(message, 'I cannot mute this user!');
+        
+        const muteRole = message.guild.roles.cache.get(MUTE_ROLE_ID);
+        if (!muteRole) return sendError(message, 'Mute role not found! Please set MUTE_ROLE_ID correctly.');
+        
+        if (target.roles.cache.has(MUTE_ROLE_ID)) {
+            return sendError(message, 'User is already muted!');
+        }
+        
+        if (!muteRole.editable) return sendError(message, 'I cannot assign the mute role! Please move my role above the mute role.');
+        
+        const reason = args.slice(1).join(' ') || 'No reason';
+        await target.roles.add(muteRole);
+        await sendConfirm(message, 'Mute (Role)', target, reason);
+        await sendLog(message, 'Mute (Role)', target, reason);
+    }
+    
+    // UNMUTE COMMAND (Remove mute role)
+    else if (command === 'unmute') {
+        const targetId = args[0];
+        if (!targetId) return sendError(message, 'Usage: `!unmute <userID> [reason]`');
+        
+        const target = await getTarget(message, targetId);
+        if (!target) return sendError(message, 'User not found!');
+        
+        const muteRole = message.guild.roles.cache.get(MUTE_ROLE_ID);
+        if (!muteRole) return sendError(message, 'Mute role not found! Please set MUTE_ROLE_ID correctly.');
+        
+        if (!target.roles.cache.has(MUTE_ROLE_ID)) {
+            return sendError(message, 'User is not muted!');
+        }
+        
+        const reason = args.slice(1).join(' ') || 'No reason';
+        await target.roles.remove(muteRole);
+        await sendConfirm(message, 'Unmute', target, reason);
+        await sendLog(message, 'Unmute', target, reason);
+    }
+    
+    // TIMEOUT COMMAND (Discord timeout)
+    else if (command === 'timeout') {
+        const targetId = args[0];
+        const durationStr = args[1];
+        if (!targetId || !durationStr) return sendError(message, 'Usage: `!timeout <userID> <time> [reason]`\nTime formats: 10m, 1h, 1d');
+        
+        const target = await getTarget(message, targetId);
+        if (!target) return sendError(message, 'User not found!');
+        if (!target.moderatable) return sendError(message, 'I cannot timeout this user!');
         
         const durationMs = parseDuration(durationStr);
         if (!durationMs) return sendError(message, 'Invalid time format! Use: 10m, 1h, 1d');
-        if (durationMs > 28 * 24 * 60 * 60 * 1000) return sendError(message, 'Mute cannot exceed 28 days!');
+        if (durationMs > 28 * 24 * 60 * 60 * 1000) return sendError(message, 'Timeout cannot exceed 28 days!');
         
         const reason = args.slice(2).join(' ') || 'No reason';
         await target.timeout(durationMs, `${reason} (Timed out by ${message.author.tag})`);
-        await sendConfirm(message, `Mute (${durationStr})`, target, reason);
-        await sendLog(message, `Mute (${durationStr})`, target, reason);
+        await sendConfirm(message, `Timeout (${durationStr})`, target, reason);
+        await sendLog(message, `Timeout (${durationStr})`, target, reason);
     }
     
-    // UNMUTE COMMAND
-    else if (command === 'unmute') {
+    // UNTIMEOUT COMMAND (Remove Discord timeout)
+    else if (command === 'untimeout') {
         const targetId = args[0];
-        if (!targetId) return sendError(message, 'Usage: `!unmute <userID>`');
+        if (!targetId) return sendError(message, 'Usage: `!untimeout <userID> [reason]`');
         
         const target = await getTarget(message, targetId);
         if (!target) return sendError(message, 'User not found!');
-        if (!target.moderatable) return sendError(message, 'I cannot unmute this user!');
+        if (!target.moderatable) return sendError(message, 'I cannot remove timeout from this user!');
         
+        if (!target.communicationDisabledUntil) {
+            return sendError(message, 'User is not timed out!');
+        }
+        
+        const reason = args.slice(1).join(' ') || 'No reason';
         await target.timeout(null);
-        await sendConfirm(message, 'Unmute', target);
-        await sendLog(message, 'Unmute', target);
+        await sendConfirm(message, 'Untimeout', target, reason);
+        await sendLog(message, 'Untimeout', target, reason);
     }
     
     // WARN COMMAND
@@ -452,7 +504,7 @@ client.on('messageCreate', async (message) => {
             .setThumbnail(client.user.displayAvatarURL())
             .addFields(
                 { name: 'Name', value: client.user.tag, inline: true },
-                { name: 'Commands', value: '21', inline: true },
+                { name: 'Commands', value: '23', inline: true },
                 { name: 'Servers', value: `${client.guilds.cache.size}`, inline: true },
                 { name: 'Uptime', value: `<t:${Math.floor(Date.now() / 1000 - process.uptime())}:R>`, inline: true }
             )
